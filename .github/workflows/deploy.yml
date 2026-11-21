@@ -1,5 +1,5 @@
 
-name: Deploy HTML to Somee
+name: Deploy ASP.NET Core MVC to Somee
 
 on:
   push:
@@ -15,7 +15,66 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Deploy HTML
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ./WebApplication1/WebApplication1.csproj
+
+      - name: Publish ASP.NET Core MVC
+        run: |
+          dotnet publish ./WebApplication1/WebApplication1.csproj -c Release --no-restore -o ./publish
+
+      - name: Configure SQL Server connection
+        env:
+          SQL_CONNECTION_STRING: ${{ secrets.TAMLE2006_SQLLOGIN_2 }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          connection = os.environ.get("SQL_CONNECTION_STRING")
+          if not connection:
+              raise ValueError("SQL connection secret is missing")
+
+          path = "./publish/web.config"
+          tree = ET.parse(path)
+          root = tree.getroot()
+
+          aspnet = root.find(".//aspNetCore")
+          if aspnet is None:
+              raise ValueError("ASP.NET Core configuration not found")
+
+          variables = aspnet.find("environmentVariables")
+          if variables is None:
+              variables = ET.SubElement(
+                  aspnet, "environmentVariables"
+              )
+
+          existing = variables.find(
+              "./environmentVariable[@name='ConnectionStrings__DefaultConnection']"
+          )
+
+          if existing is None:
+              ET.SubElement(
+                  variables,
+                  "environmentVariable",
+                  name="ConnectionStrings__DefaultConnection",
+                  value=connection
+              )
+          else:
+              existing.set("value", connection)
+
+          tree.write(
+              path,
+              encoding="utf-8",
+              xml_declaration=True
+          )
+          PY
+
+      - name: Deploy MVC to Somee
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -23,6 +82,6 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          local-dir: ./WebApplication1/wwwroot/
-          server-dir: /www.thanhtam.somee.com/wwwroot/
+          local-dir: ./publish/
+          server-dir: /www.thanhtam.somee.com/
           dangerous-clean-slate: false
